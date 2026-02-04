@@ -1,0 +1,15 @@
+max_log_len = 64
+max_sequ_len = 32
+
+tokenizer_vocab_len = 512
+
+emsize = 32
+d_hid_emb = 64
+n_layers_emb = 4
+n_head_emb = 4
+dropout_embedder = 0.0
+
+d_hid_sequ = 64
+n_layers_sequ = 4
+n_head_sequ = 4
+dropout_sequ_model = 0.0

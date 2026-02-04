@@ -1,0 +1,53 @@
+[Data]
+raw_path = './data/BGL/BGL.log'
+data_path = './data/BGL_sequences/'
+n_workers = 0
+
+train_frac = 0.6
+val_frac = 0.05
+fit_frac = 0.05
+test_frac = 0.30
+balance_test = true
+
+tokenizer_fit_samples = 400_000
+
+# Only relevant for BGL&TBird
+window_size = 60 #s
+max_samples = 256
+
+[Train]
+n_max_epochs = 400
+lr = 1e-4
+n_mask = 0.15
+max_grad_norm = 1
+batch_size = 256 #56 #128S
+
+[EarlyStopping]
+patience = 8
+min_delta = 0.0
+
+[Misc]
+device = 'cpu'
+
+save = true
+save_path = './models/'
+run_name = 'bgl'
+
+warm_start = true
+warm_start_model_path = './models/bgl/'
+
+calc_tokenizer_stats = false
+n_sequences_tokenizer_stats = 5_000
+
+store_loss = true
+plot_loss = true
+
+[Test]
+model_path = './models/bgl/'
+percentile_threshold = 95
+
+max_point_anomaly_ref_samples = 4_000
+max_threshold_fit_samples = -1
+max_test_samples = -1
+#balance normal and abnormal test sequences
+balance_test = true

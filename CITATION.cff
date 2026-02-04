@@ -1,0 +1,47 @@
+cff-version: 1.2.0
+title:  >-
+  ContraLog: Log File Anomaly Detection with Contrastive
+  Learning and Masked Language Modeling
+message: >-
+  If you found this code useful, please cite the following
+  paper.
+type: software
+authors:
+  - given-names: Simon
+    family-names: Dietz
+    email: simon.j.dietz@fau.de
+    orcid: 'https://orcid.org/0009-0004-8963-6220'
+  - given-names: Kai
+    family-names: Klede
+    email: kai.klede@fau.de
+    orcid: 'https://orcid.org/0000-0002-1284-541X'
+  - given-names: An
+    family-names: Nguyen
+    email: an.nguyen@fau.de
+    orcid: 'https://orcid.org/0000-0002-8759-7641'
+  - given-names: Bjoern M
+    family-names: Eskofier
+    email: bjoern.eskofier@fau.de
+    orcid: 'https://orcid.org/0000-0002-0417-0336'
+identifiers:
+  - type: url
+    value: 'https://arxiv.org/abs/2602.03678'
+    description: The ArXiv of the encompassing paper.
+  - type: doi
+    value: 10.48550/arXiv.2602.03678
+    description: The DOI of the work.
+repository-code: 'https://github.com/SJDietz/contralog-anomaly-detection'
+abstract: >-
+  ContraLog is a self-supervised method for detecting
+  anomalies in log files without relying on log parsers.
+  Traditional approaches first parse log messages into
+  discrete templates, discarding variable values and
+  semantic content. ContraLog instead operates directly on
+  raw log messages by predicting continuous message
+  embeddings.
+keywords:
+  - Anomaly detection
+  - Contrastive learning
+  - Masked language modeling
+  - Log file processing
+license: MIT

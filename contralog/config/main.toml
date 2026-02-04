@@ -1,0 +1,19 @@
+[HDFS]
+model_conf = './contralog/config/model_conf_hdfs.toml'
+train_conf = './contralog/config/train_conf_hdfs.toml'
+
+[BGL]
+model_conf = './contralog/config/model_conf_bgl.toml'
+train_conf = './contralog/config/train_conf_bgl.toml'
+
+[TBird]
+model_conf = './contralog/config/model_conf_tbird.toml'
+train_conf = './contralog/config/train_conf_tbird.toml'
+
+[ToyDataset] # A toy example for a toy dataset.
+model_conf = './contralog/config/model_conf_toy.toml'
+train_conf = './contralog/config/train_conf_toy.toml'
+
+[YourCustomDataset] # Add paths to your custom configurations here.
+model_conf = 'TODO'
+train_conf = 'TODO'

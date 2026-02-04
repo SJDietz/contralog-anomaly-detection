@@ -1,0 +1,53 @@
+[Data]
+raw_path = './data/raw/toy_bgl.log'
+data_path = './data/toy_sequences/'
+n_workers = 0
+
+train_frac = 0.4
+val_frac = 0.1
+fit_frac = 0.1
+test_frac = 0.4
+balance_test = false
+
+tokenizer_fit_samples = 200
+
+# Only relevant for BGL&TBird
+window_size = 60 #s
+max_samples = 32
+
+[Train]
+n_max_epochs = 10   
+lr = 1e-4
+n_mask = 0.15
+max_grad_norm = 1
+batch_size = 5
+
+[EarlyStopping]
+patience = 4
+min_delta = 0.0
+
+[Misc]
+device = 'cpu'
+
+save = true
+save_path = './models/'
+run_name = 'toy'
+
+warm_start = false
+warm_start_model_path = './models/toy/'
+
+calc_tokenizer_stats = true
+n_sequences_tokenizer_stats = 200
+
+store_loss = true
+plot_loss = true
+
+[Test]
+model_path = './models/toy/'
+percentile_threshold = 95
+
+max_point_anomaly_ref_samples = 200
+max_threshold_fit_samples = -1
+max_test_samples = -1
+#balance normal and abnormal test sequences
+balance_test = true
