@@ -32,8 +32,8 @@ ContraLog addresses this limitation by:
 <summary>Windows</summary>
 
 ```
-git clone ...
-cd contra_log
+git clone https://github.com/SJDietz/contralog-anomaly-detection.git
+cd contralog-anomaly-detection
 python -m venv .venv
 call .venv/Scripts/activate.bat
 pip install -r requirements.txt
@@ -43,8 +43,8 @@ pip install -r requirements.txt
 <summary>Linux & macOS </summary>
 
 ```
-git clone ...
-cd contra_log
+git clone https://github.com/SJDietz/contralog-anomaly-detection.git
+cd contralog-anomaly-detection
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -172,7 +172,7 @@ This section describes the main configuration options for ContraLog. Each parame
 
 ## Structure
 ```
-ContraLog
+contralog-anomaly-detection
 │   main.py--------------------------> Main script for training & testing
 │   requirements.txt-----------------> pip install -r requirements.txt
 │
