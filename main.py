@@ -22,10 +22,14 @@ import toml
 import sys
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = '16'
+# Flash Attention and TensorFloat-32
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.matmul.allow_tf32 = True
 # ------------------------------
 random.seed(0)
 np.random.seed(0)
 torch.manual_seed(0)
+torch.cuda.manual_seed(0)
 # -------
 
 def load_test_data(log_data_util, train_conf):
@@ -138,6 +142,7 @@ def get_features(point_scores, context_scores):
             point.max(),
             np.mean(context), 
             context.max(), #can add more features here
+            # len(context) # e.g., length of sequences
         ])
     return np.array(X)
 
@@ -170,7 +175,10 @@ def compute_robust_z_scores(X, med, mad):
     """Compute robust z-scores using median and MAD."""
     mad_safe = mad.copy()
     mad_safe[mad_safe == 0] = 1e-9
-    return np.abs((X - med) / mad_safe)
+    # Both options can be valid depending on the situation.
+    # If low feature values are normal, use clip, else abs.
+    #return np.abs((X - med) / mad_safe)
+    return np.clip((X - med) / mad_safe, a_min=0, a_max=None)
 
 
 def evaluate_feature_combinations(X_fit, X_test, y_test, feature_names, percentile_threshold):
@@ -288,11 +296,11 @@ def plot_feature_contributions(rz, y_test, feature_names, dataset, model_path):
     )
 
 
-def plot_threshold_sensitivity(X_fit, X_test, y_test, dataset, model_path):
+def plot_threshold_sensitivity(X_fit, X_test, y_test, dataset=None, model_path=None):
     """Plot F1 score vs threshold percentile."""
     mask = [True, True, True, True]  #Use all features
     score_lst = []
-    space = np.linspace(80, 100, 1000)
+    space = np.linspace(1, 100, 1000)
     
     for p in space:
         med = np.median(X_fit, axis=0)
@@ -318,7 +326,8 @@ def plot_threshold_sensitivity(X_fit, X_test, y_test, dataset, model_path):
     if dataset is not None:
         plt.title(dataset)
     plt.tight_layout()
-    plt.savefig(os.path.join(model_path, f'{dataset}_f1_vs_threshold.pdf'))
+    if model_path is not None and dataset is not None:
+        plt.savefig(os.path.join(model_path, f'{dataset}_f1_vs_threshold.pdf'))
     
     # Print best threshold
     max_score_idx = np.argmax(score_lst)
@@ -418,8 +427,7 @@ def make_data(main_conf, dataset):
 
     if dataset == "HDFS":
         all_session_logs, all_session_len, all_labels = load_hdfs(label_path=label_path,
-                                                                  log_path=raw_path, replace_blk=True,
-                                                                  shuffle=False)
+                                                                  log_path=raw_path, replace_blk=True)
     elif dataset == "BGL":
         all_session_logs, all_labels = load_bgl(path=raw_path,
                                                 window_size=train_conf['Data']['window_size'],

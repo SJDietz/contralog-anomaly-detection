@@ -7,9 +7,9 @@ emsize = 126
 d_hid_emb = 512
 n_layers_emb = 6
 n_head_emb = 6
-dropout_embedder = 0.0
+dropout_embedder = 0.1
 
 d_hid_sequ = 512
 n_layers_sequ = 6
 n_head_sequ = 6
-dropout_sequ_model = 0.0
+dropout_sequ_model = 0.1

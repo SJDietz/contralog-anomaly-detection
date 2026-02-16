@@ -8,6 +8,7 @@ data/raw/*
 !data/raw/toy_bgl.log
 
 .vscode
+.debug
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

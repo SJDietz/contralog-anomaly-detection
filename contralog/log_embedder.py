@@ -22,21 +22,18 @@ class LogEmbedder():
     def embed(self, logs, batch_size: int = 256):
         """Cach log embeddings"""
         self.anomaly_model.message_encoder.eval()
-        unique_logs = np.array(list(set(logs)))
-        mask = [False if hash(
-            log) in self.emb_dict else True for log in unique_logs]
-        unique_logs = list(unique_logs[mask])
-        # Only embed unique logs that are not in the cach (emb_dict)
-        if len(unique_logs) > 0:
-            # print(len(unique_logs), 'new logs found')
+        # Preserve first-occurrence order when deduping
+        unique_logs = list(dict.fromkeys(logs))
+        # Find which unique logs are not yet cached
+        to_embed = [log for log in unique_logs if hash(log) not in self.emb_dict]
+        if len(to_embed) > 0:
             with torch.no_grad():
-                embs = self.anomaly_model.embed(
-                    logs=unique_logs, batch_size=batch_size).cpu().detach().numpy()
+                embs_new = self.anomaly_model.embed(logs=to_embed, batch_size=batch_size).cpu().detach().numpy()
+            for log, emb in zip(to_embed, embs_new):
+                self.emb_dict[hash(log)] = emb
 
-            log_emb_dict = dict(zip([hash(log) for log in unique_logs], embs))
-            self.emb_dict = self.emb_dict | log_emb_dict
-
-        embs = [self.emb_dict[hash(log)] for log in logs]
+        # Return embeddings in the same order as input `logs` as a numpy array
+        embs = np.array([self.emb_dict[hash(log)] for log in logs])
         return embs
 
     def direct_embed(self, logs, batch_size: int = 256):

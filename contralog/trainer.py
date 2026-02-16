@@ -94,6 +94,9 @@ class Trainer():
             # load exisiting opitimizer state
             self.optimizer.load_state_dict(torch.load(
                 self.conf['Misc']['warm_start_model_path'] + 'optimizer.save'))
+            
+        self.grad_scaler = torch.amp.GradScaler(device=self.device, enabled=True)
+
         max_sequ_len = self.anomaly_model.conf['max_sequ_len']
         self.n_mask = self.conf['Train']['n_mask']
 
@@ -255,10 +258,12 @@ class Trainer():
 
                 if mode == 'train':
                     self.optimizer.zero_grad(set_to_none=True)
-                    loss.backward()
+                    #loss.backward()
+                    self.grad_scaler.scale(loss).backward()
                     torch.nn.utils.clip_grad_norm_(
                         self.params, self.conf['Train']['max_grad_norm'])
-                    self.optimizer.step()
+                    self.grad_scaler.step(self.optimizer)
+                    self.grad_scaler.update()
 
         mean_loss = sum(self.tmp_loss_lst)/len(self.tmp_loss_lst)
         std_loss = torch.std(torch.tensor(self.tmp_loss_lst))
@@ -343,6 +348,7 @@ def make_new_tokenizer(max_fit_sample, log_data_util, model_conf_path):
     tokenizer._tokenizer.model.fuse_unk = True
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
         [pre_tokenizers.Metaspace(), pre_tokenizers.Digits()])
+        #[pre_tokenizers.Metaspace(split=False)])#, pre_tokenizers.Digits()])
     # Load all train logs, then randomly sample max_fit_sample
     all_log_messages = log_data_util.get(
         subset='train', ravel=True, logs=True, length=False, labels=False)['logs']

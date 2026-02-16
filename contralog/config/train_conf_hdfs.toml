@@ -2,8 +2,8 @@
 raw_path = './data/HDFS_V1/HDFS.log'
 # label_path only needed for HDFS
 label_path = './data/HDFS_v1/preprocessed/anomaly_label.csv'
-data_path = './data/HDFS_sequences/'
-n_workers = 0
+data_path = './data/HDFS_Sequences/'
+n_workers = 4
 
 train_frac = 0.6
 val_frac = 0.05
@@ -25,11 +25,11 @@ patience = 12
 min_delta = 0.0
 
 [Misc]
-device = 'cpu'
+device = 'cuda'
 
 save = true
 save_path = './models/'
-run_name = 'hdfs'
+run_name = 'hdfs_ideal'
 
 warm_start = false
 warm_start_model_path = './models/hdfs/'
@@ -45,7 +45,7 @@ model_path = './models/hdfs/'
 percentile_threshold = 95
 
 max_point_anomaly_ref_samples = 4_000
-max_threshold_fit_samples = -1
-max_test_samples = -1
+max_threshold_fit_samples = 4_000
+max_test_samples = 4_000
 #balance normal and abnormal test sequences
 balance_test = true
