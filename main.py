@@ -1,3 +1,8 @@
+import os
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '16')
+os.environ.setdefault('OMP_NUM_THREADS', '16')
+os.environ.setdefault('MKL_NUM_THREADS', '16')
+
 from contralog.inference_scripts import get_point_anomaly_scores, get_contextual_anomaly_scores, PointAnomalyDetector
 from contralog.trainer import Trainer, make_new_tokenizer
 from contralog.log_embedder import LogEmbedder
@@ -20,8 +25,6 @@ import random
 import torch
 import toml
 import sys
-import os
-os.environ['OPENBLAS_NUM_THREADS'] = '16'
 # Flash Attention and TensorFloat-32
 torch.backends.cuda.enable_flash_sdp(True)
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -31,7 +34,6 @@ np.random.seed(0)
 torch.manual_seed(0)
 torch.cuda.manual_seed(0)
 # -------
-
 def load_test_data(log_data_util, train_conf):
     """Load and prepare all test data subsets."""
     n_point_anomaly = train_conf['Test']['max_point_anomaly_ref_samples']
@@ -142,7 +144,7 @@ def get_features(point_scores, context_scores):
             point.max(),
             np.mean(context), 
             context.max(), #can add more features here
-            # len(context) # e.g., length of sequences
+            #len(context) # e.g., length of sequences
         ])
     return np.array(X)
 
@@ -177,14 +179,16 @@ def compute_robust_z_scores(X, med, mad):
     mad_safe[mad_safe == 0] = 1e-9
     # Both options can be valid depending on the situation.
     # If low feature values are normal, use clip, else abs.
-    #return np.abs((X - med) / mad_safe)
-    return np.clip((X - med) / mad_safe, a_min=0, a_max=None)
+    return np.abs((X - med) / mad_safe)
+    #return np.clip((X - med) / mad_safe, a_min=0, a_max=None)
 
 
 def evaluate_feature_combinations(X_fit, X_test, y_test, feature_names, percentile_threshold):
     """Evaluate all combinations of features and print results."""
+    ablation_lines = []
     for num_features in range(1, len(feature_names) + 1):
         for feature_indices in combinations(range(len(feature_names)), num_features):
+            feature_indices = list(feature_indices)
             selected_features = [feature_names[i] for i in feature_indices]
             print(', '.join(selected_features), end=', ')
             
@@ -193,11 +197,17 @@ def evaluate_feature_combinations(X_fit, X_test, y_test, feature_names, percenti
             mad = np.median(np.abs(X_fit_selected - med), axis=0)
             
             rz = compute_robust_z_scores(X_fit_selected, med, mad)
+            
+            # Normalize per feature so no single feature dominates the L2 norm
+            rz_max = rz.max(axis=0)
+            rz_max[rz_max == 0] = 1.0
+            rz = rz / rz_max
             score = np.linalg.norm(rz, axis=1, ord=2)
             thr = np.percentile(score, percentile_threshold)
             
             X_test_selected = X_test[:, feature_indices]
             rz = compute_robust_z_scores(X_test_selected, med, mad)
+            rz = rz / rz_max  # use fit-derived scale
             score_test = np.linalg.norm(rz, axis=1, ord=2)
             y_pred = (score_test > thr).astype(int)
             
@@ -205,9 +215,11 @@ def evaluate_feature_combinations(X_fit, X_test, y_test, feature_names, percenti
             f1 = report['1.0']['f1-score'] * 100
             precision = report['1.0']['precision'] * 100
             recall = report['1.0']['recall'] * 100
+            line = f"{', '.join(selected_features)}, ---- F1: {f1:.3f}% ----- Precision: {precision:.3f}%, Recall: {recall:.3f}%"
             print(f"---- F1: {f1:.3f}% ----- Precision: {precision:.3f}%, Recall: {recall:.3f}%")
+            ablation_lines.append(line)
     
-    return y_pred, rz
+    return y_pred, rz, ablation_lines
 
 
 def plot_f1_by_sequence_length(y_test, y_pred, precomputed_scores_test, dataset, model_path):
@@ -298,19 +310,23 @@ def plot_feature_contributions(rz, y_test, feature_names, dataset, model_path):
 
 def plot_threshold_sensitivity(X_fit, X_test, y_test, dataset=None, model_path=None):
     """Plot F1 score vs threshold percentile."""
-    mask = [True, True, True, True]  #Use all features
+    mask = [True] * X_fit.shape[1]  #Use all features
     score_lst = []
     space = np.linspace(1, 100, 1000)
     
+    med = np.median(X_fit, axis=0)
+    mad = np.median(np.abs(X_fit - med), axis=0)
+    rz_fit = compute_robust_z_scores(X_fit, med, mad)
+    rz_max = rz_fit.max(axis=0)
+    rz_max[rz_max == 0] = 1.0
+    rz_fit = rz_fit / rz_max
+    rz_test = compute_robust_z_scores(X_test, med, mad)
+    rz_test = rz_test / rz_max
+    
     for p in space:
-        med = np.median(X_fit, axis=0)
-        mad = np.median(np.abs(X_fit - med), axis=0)
-        
-        rz = compute_robust_z_scores(X_fit, med, mad)
-        score = np.linalg.norm(rz[:, mask], axis=1, ord=2)
+        score = np.linalg.norm(rz_fit[:, mask], axis=1, ord=2)
         thr = np.percentile(score, p)
         
-        rz_test = compute_robust_z_scores(X_test, med, mad)
         score_test = np.linalg.norm(rz_test[:, mask], axis=1, ord=2)
         y_pred = (score_test > thr).astype(int)
         
@@ -371,12 +387,12 @@ def test(main_conf, dataset=None):
     anomaly_model.message_encoder.eval()
     anomaly_model.sequence_encoder.eval()
     
-    with torch.no_grad():
+    with torch.inference_mode():
         log_embedder = LogEmbedder(anomaly_model=anomaly_model)
         
         print('calculating scores')
         print('fit data 0/3', end='\r')
-        normal_embs_fit = log_embedder.embed(
+        normal_embs_fit = log_embedder.direct_embed(
             list(set(itertools.chain(*data_subsets['normal_train'])))
         )
         point_anomaly_detector = PointAnomalyDetector(normal_embs_fit)
@@ -394,16 +410,26 @@ def test(main_conf, dataset=None):
     print('fit shape:', X_fit.shape, 'test shape:', X_test.shape)
 
     # evaluate
-    feature_names = np.array(['Point Mean', 'Point Max', 'Context Mean', 'Context Max'])
-    y_pred, rz = evaluate_feature_combinations(
+    feature_names = np.array(['Point Mean', 'Point Max', 'Context Mean', 'Context Max'])#, 'Sequence Length'])
+    y_pred, rz, ablation_lines = evaluate_feature_combinations(
         X_fit, X_test, y_test, feature_names, 
         train_conf['Test']['percentile_threshold']
     )
     
     print('-' * 10)
-    print(classification_report(y_test, y_pred, output_dict=False))
+    report_str = classification_report(y_test, y_pred, output_dict=False)
+    print(report_str)
 
-    # Create plots
+    # Save test results with the model
+    with open(os.path.join(model_path, 'classification_report.txt'), 'w') as f:
+        f.write(report_str)
+    with open(os.path.join(model_path, 'ablation_results.txt'), 'w') as f:
+        f.write('\n'.join(ablation_lines))
+    with open(os.path.join(model_path, 'train_conf.toml'), 'w') as f:
+        # Overwrite the training config that should be in the model folder from training
+        toml.dump(train_conf, f)
+
+    # Plots
     plot_f1_by_sequence_length(y_test, y_pred, precomputed_scores_test, dataset, model_path)
     plot_feature_contributions(rz, y_test, feature_names, dataset, model_path)
     plot_threshold_sensitivity(X_fit, X_test, y_test, dataset, model_path)

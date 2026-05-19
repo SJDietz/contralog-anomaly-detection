@@ -67,6 +67,6 @@ def load_bgl(path: str, window_size, max_samples, n=-1, shuffle: bool = False):
         log_lst, label_lst = zip(*c)
 
     log_lst = np.array(log_lst, dtype=object)
-    label_lst = np.array(label_lst)
+    label_lst = np.array(label_lst, dtype=object)
 
     return log_lst, label_lst

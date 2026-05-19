@@ -3,7 +3,9 @@ import torch
 import numpy as np
 from torch import nn
 import itertools
-
+import os
+# Optional replace log_embedder.embed() with log_embedder.direct_embed() to disable caching
+# if you run into memory issues.
 
 class PointAnomalyDetector:
     """
@@ -45,6 +47,40 @@ class PointAnomalyDetector:
         # cos_dist
         return scores
 
+    def save(self, model_path: str):
+        """
+        Saves the normalized reference embeddings to disk.
+
+        Args:
+            model_path (str): Directory to save the detector file.
+        """
+        os.makedirs(model_path, exist_ok=True)
+        np.savez(
+            os.path.join(model_path, 'point_anomaly_detector.npz'),
+            normal_embs=self.normal_embs
+        )
+
+    @classmethod
+    def load_from_pretrained(cls, model_path: str):
+        """
+        Restores a PointAnomalyDetector from a previously saved file.
+
+        Args:
+            model_path (str): Directory containing 'point_anomaly_detector.npz'.
+
+        Returns:
+            PointAnomalyDetector: Restored detector, ready to score.
+        """
+        path = os.path.join(model_path, 'point_anomaly_detector.npz')
+        data = np.load(path)
+        instance = cls.__new__(cls)
+        # normal_embs are already L2-normalised, restore without re-normalising
+        instance.normal_embs = data['normal_embs']
+        instance.nena = NearestNeighbors(
+            n_neighbors=1, algorithm='auto', metric='euclidean', n_jobs=16
+        ).fit(instance.normal_embs)
+        return instance
+
 
 def get_point_anomaly_scores(point_anomaly_detector, log_embedder, log_sequences):
     """
@@ -82,7 +118,7 @@ def get_point_anomaly_scores(point_anomaly_detector, log_embedder, log_sequences
     return scores
 
 
-def get_contextual_anomaly_score_single(log_embedder, single_log_sequence):
+def get_contextual_anomaly_score_single(log_embedder, single_log_sequence, truncate:bool=True):
     """
     Computes contextual anomaly scores for a single log sequence by
     masking each log one at a time and measuring reconstruction error.
@@ -97,9 +133,12 @@ def get_contextual_anomaly_score_single(log_embedder, single_log_sequence):
         np.ndarray: 
             A 1D array of contextual anomaly scores for each log in the sequence.
     """
-    with torch.no_grad():
-        max_len = log_embedder.anomaly_model.conf['max_sequ_len']
-        embs = log_embedder.direct_embed(logs=single_log_sequence[0:max_len])
+    with torch.inference_mode():
+        if truncate:
+            max_len = log_embedder.anomaly_model.conf['max_sequ_len']
+            embs = log_embedder.direct_embed(logs=single_log_sequence[0:max_len])
+        else:
+            embs = log_embedder.direct_embed(logs=single_log_sequence)
         embs = torch.tensor(np.array(embs)).to(
             log_embedder.anomaly_model.device)
         original_embs = embs.clone()
@@ -124,7 +163,7 @@ def get_contextual_anomaly_score_single(log_embedder, single_log_sequence):
         return l_item
 
 
-def get_contextual_anomaly_scores(log_embedder, log_sequences):
+def get_contextual_anomaly_scores(log_embedder, log_sequences, truncate:bool=True):
     """
     Computes contextual anomaly scores for a list of log sequences.
 
@@ -147,7 +186,205 @@ def get_contextual_anomaly_scores(log_embedder, log_sequences):
     for single_log_sequence in log_sequences:
         try:
             anomaly_scores.append(get_contextual_anomaly_score_single(
-                log_embedder, single_log_sequence))
+                log_embedder, single_log_sequence, truncate=truncate))
         except Exception as e:
             print(f"Error processing sequence: {e}")
     return anomaly_scores
+
+
+# ---------------------------------------------------------------------------
+
+def _robust_z_scores(X: np.ndarray, med: np.ndarray, mad: np.ndarray) -> np.ndarray:
+    """Compute robust z-scores from feature values."""
+    mad_safe = mad.copy()
+    mad_safe[mad_safe == 0] = 1e-9
+    return np.abs((X - med) / mad_safe)
+
+
+def _extract_sequence_features(
+    point_scores: list, contextual_scores: list
+) -> np.ndarray:
+    """
+    Aggregate scores into one feature vector per sequence.
+    """
+    rows = []
+    for point, context in zip(point_scores, contextual_scores):
+        rows.append([
+            float(np.mean(point)),
+            float(point.max()),
+            float(np.mean(context)),
+            float(context.max()),
+        ])
+    return np.array(rows)
+
+
+class InferenceManager:
+    """
+    Wrapper for model loading, calibration, and inference.
+
+    This class bundles the pretrained anomaly model, the point anomaly
+    detector, and calibration parameters for sequence-level scoring.
+    """
+
+    _CALIBRATION_FILE = 'calibration_params.npz'
+
+    def __init__(self, model_path: str, device: str = None):
+        self.model_path = model_path
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device
+
+        # Avoid a circular dependency
+        from contralog.models import AnomalyModel
+        from contralog.log_embedder import LogEmbedder
+
+        self.anomaly_model = AnomalyModel.from_pretrained(model_path, device=device)
+        self.anomaly_model.eval()
+        self.log_embedder = LogEmbedder(anomaly_model=self.anomaly_model)
+
+        # Populated by calibrate() or from_pretrained() !
+        self.point_anomaly_detector: PointAnomalyDetector = None
+        self._cal_med: np.ndarray = None
+        self._cal_mad: np.ndarray = None
+        self._cal_rz_max: np.ndarray = None
+        self._cal_threshold: float = None
+
+
+    def _save_calibration(self):
+        np.savez(
+            os.path.join(self.model_path, self._CALIBRATION_FILE),
+            med=self._cal_med,
+            mad=self._cal_mad,
+            rz_max=self._cal_rz_max,
+            threshold=self._cal_threshold,
+        )
+
+    def _load_calibration(self):
+        cal_path = os.path.join(self.model_path, self._CALIBRATION_FILE)
+        if not os.path.exists(cal_path):
+            raise FileNotFoundError(
+                f"Calibration file not found at {cal_path}. "
+                "Run calibrate() first."
+            )
+        data = np.load(cal_path)
+        self._cal_med = data['med']
+        self._cal_mad = data['mad']
+        self._cal_rz_max = data['rz_max']
+        self._cal_threshold = float(data['threshold'])
+
+    @classmethod
+    def from_pretrained(cls, model_path: str, device: str = None):
+        """
+        Load model weights and saved calibration from disk.
+
+        Args:
+            model_path: Directory with model and calibration files.
+            device: Torch device. Auto-detected if None.
+
+        Returns:
+            InferenceManager: Ready-to-use inference manager.
+        """
+        manager = cls(model_path=model_path, device=device)
+        manager.point_anomaly_detector = PointAnomalyDetector.load_from_pretrained(
+            model_path
+        )
+        manager._load_calibration()
+        return manager
+
+    def calibrate(
+        self,
+        point_anomaly_references: list,
+        calibration_sequences: list,
+        percentile_threshold: float = 95.0,
+        truncate:bool=True
+    ):
+        """
+        Fit point-anomaly references and sequence-level calibration stats.
+
+        Args:
+            point_anomaly_references:
+                Normal sequences used as reference logs for nearest-neighbor
+                point anomaly scoring.
+            calibration_sequences:
+                Normal sequences used to compute median/MAD and threshold.
+            percentile_threshold:
+                Percentile used as decision threshold.
+            truncate:
+                If True, limit contextual scoring to max sequence length.
+        """
+        with torch.inference_mode():
+            flat_logs = list(set(itertools.chain(*point_anomaly_references)))
+            print('Embedding point anomaly references...')
+            normal_embs = self.log_embedder.direct_embed(flat_logs)
+            self.point_anomaly_detector = PointAnomalyDetector(
+                np.array(normal_embs)
+            )
+            self.point_anomaly_detector.save(self.model_path)
+
+            print('Calculating point anomaly scores...')
+            cal_point = get_point_anomaly_scores(
+                self.point_anomaly_detector,
+                self.log_embedder,
+                calibration_sequences,
+            )
+            print('Calculating contextual anomaly scores...')
+            cal_ctx = get_contextual_anomaly_scores(
+                self.log_embedder, calibration_sequences, truncate
+            )
+
+        X_cal = _extract_sequence_features(cal_point, cal_ctx)
+
+        med = np.median(X_cal, axis=0)
+        mad = np.median(np.abs(X_cal - med), axis=0)
+        rz = _robust_z_scores(X_cal, med, mad)
+        rz_max = rz.max(axis=0)
+        rz_max[rz_max == 0] = 1.0
+        scores = np.linalg.norm(rz / rz_max, axis=1, ord=2)
+
+        self._cal_med = med
+        self._cal_mad = mad
+        self._cal_rz_max = rz_max
+        self._cal_threshold = float(np.percentile(scores, percentile_threshold))
+
+        self._save_calibration()
+        print(
+            f"Calibration complete. Threshold={self._cal_threshold:.4f} "
+            f"(p{percentile_threshold}). Saved to '{self.model_path}'."
+        )
+
+    def score(self, log_sequences: list, truncate: bool = True) -> dict:
+        """
+            Score one or more log sequences.
+        Args:
+            log_sequences: Log sequences to evaluate.
+            truncate: If True, truncate for contextual scoring.
+        Returns:
+            dict: Point/context scores, sequence features, sequence anomaly
+                scores, and binary anomaly predictions.
+        """
+        if self.point_anomaly_detector is None or self._cal_threshold is None:
+            raise RuntimeError(
+                "Model is not calibrated. Call calibrate() or load with "
+                "InferenceManager.from_pretrained()."
+            )
+
+        with torch.inference_mode():
+            point_scores = get_point_anomaly_scores(
+                self.point_anomaly_detector, self.log_embedder, log_sequences
+            )
+            contextual_scores = get_contextual_anomaly_scores(
+                self.log_embedder, log_sequences, truncate
+            )
+
+        features = _extract_sequence_features(point_scores, contextual_scores)
+        rz = _robust_z_scores(features, self._cal_med, self._cal_mad)
+        seq_scores = np.linalg.norm(rz / self._cal_rz_max, axis=1, ord=2)
+
+        return {
+            'point_scores': point_scores,
+            'contextual_scores': contextual_scores,
+            'sequence_features': features,
+            'sequence_anomaly_scores': seq_scores,
+            'is_anomaly': seq_scores > self._cal_threshold,
+        }
+

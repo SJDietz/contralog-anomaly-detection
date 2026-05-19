@@ -4,6 +4,34 @@ import numpy as np
 import itertools
 
 
+def _is_invalid_message(msg):
+    if msg is None:
+        return True
+    if isinstance(msg, float) and np.isnan(msg):
+        return True
+    return False
+
+
+def _normalize_log_sequence(seq):
+    # Allow unexpected scalar records and normalize to list[str].
+    if isinstance(seq, (str, np.str_)):
+        return [str(seq)]
+    if seq is None:
+        return []
+
+    normalized = []
+    try:
+        iterator = iter(seq)
+    except TypeError:
+        return [] if _is_invalid_message(seq) else [str(seq)]
+
+    for msg in iterator:
+        if _is_invalid_message(msg):
+            continue
+        normalized.append(str(msg))
+    return normalized
+
+
 def save(data, path, memmap: bool = True):
     if memmap:
         f = np.memmap(path, dtype='object', mode='w+', shape=data.shape)
@@ -35,8 +63,11 @@ class LogDataUtil():
         if n is not None:
             log_sequences = log_sequences[0:n]
 
+        # Normalize object/memmap payloads to list[list[str]] and drop invalid entries.
+        normalized_sequences = [_normalize_log_sequence(seq) for seq in log_sequences]
+
         if length:
-            log_lengths = [len(l) for l in log_sequences]
+            log_lengths = [len(l) for l in normalized_sequences]
             results['lengths'] = log_lengths
         if labels:
             if subset in ('train', 'val', 'normal_fit', 'normal_test'):
@@ -46,8 +77,8 @@ class LogDataUtil():
             results['labels'] = log_labels
         if logs:
             if ravel:
-                log_sequences = list(itertools.chain(*log_sequences))
-            results['logs'] = log_sequences
+                normalized_sequences = list(itertools.chain(*normalized_sequences))
+            results['logs'] = normalized_sequences
 
         return results
 

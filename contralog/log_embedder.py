@@ -27,7 +27,7 @@ class LogEmbedder():
         # Find which unique logs are not yet cached
         to_embed = [log for log in unique_logs if hash(log) not in self.emb_dict]
         if len(to_embed) > 0:
-            with torch.no_grad():
+            with torch.inference_mode():
                 embs_new = self.anomaly_model.embed(logs=to_embed, batch_size=batch_size).cpu().detach().numpy()
             for log, emb in zip(to_embed, embs_new):
                 self.emb_dict[hash(log)] = emb
@@ -39,7 +39,7 @@ class LogEmbedder():
     def direct_embed(self, logs, batch_size: int = 256):
         """Embed without caching"""
         self.anomaly_model.message_encoder.eval()
-        with torch.no_grad():
+        with torch.inference_mode():
             embs = self.anomaly_model.embed(
                 logs=logs, batch_size=batch_size).cpu().detach().numpy()
         return embs

@@ -1,5 +1,6 @@
 
 import os
+from tokenizers import Tokenizer as _HFTokenizer
 import toml
 import numpy as np
 from tqdm import tqdm
@@ -10,13 +11,11 @@ from torch.optim import AdamW
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
-from tokenizers import Tokenizer as toklib
-from tokenizers import ByteLevelBPETokenizer, pre_tokenizers
 
 from helper.visualize import plot_loss
 from helper.LogDataUtil import LogDataUtil
 from contralog.data_loaders import LogDataset, LogDataset_collate
-
+from contralog.tokenizer import make_tokenizer
 
 class EarlyStopping():
     """
@@ -65,6 +64,7 @@ class Trainer():
                  device: str = 'cuda',
                  n_workers: int = 0):
 
+        self.train_conf_path = train_conf_path
         self.conf = toml.load(train_conf_path)
         if log_data_util is None:
             log_data_util = LogDataUtil(
@@ -94,7 +94,17 @@ class Trainer():
             # load exisiting opitimizer state
             self.optimizer.load_state_dict(torch.load(
                 self.conf['Misc']['warm_start_model_path'] + 'optimizer.save'))
-            
+            # load historic loss so plots show full training history
+            warm_path = self.conf['Misc']['warm_start_model_path']
+            train_loss_file = warm_path + 'train_loss.txt'
+            eval_loss_file = warm_path + 'eval_loss.txt'
+            if os.path.exists(train_loss_file):
+                historic_train = np.loadtxt(train_loss_file).ravel()
+                self.train_loss_lst = [[v] for v in historic_train]
+            if os.path.exists(eval_loss_file):
+                historic_eval = np.loadtxt(eval_loss_file).ravel()
+                self.eval_loss_lst = [[v] for v in historic_eval]
+
         self.grad_scaler = torch.amp.GradScaler(device=self.device, enabled=True)
 
         max_sequ_len = self.anomaly_model.conf['max_sequ_len']
@@ -144,6 +154,9 @@ class Trainer():
             plot_loss(self)
             plt.savefig(save_path + 'loss.png', dpi=300)
         torch.save(self.optimizer.state_dict(), save_path + 'optimizer.save')
+        with open(save_path + 'train_conf.toml', 'w') as f:
+            # Also save the training config so we know how this model was trained
+            toml.dump(self.conf, f)
         plt.close()
 
     def train(self):
@@ -154,7 +167,7 @@ class Trainer():
         for epoch in range(n_max_epochs):
             print(f'---- Epoch: {epoch+1}/{n_max_epochs} ----')
             self.do_epoch(mode='train')
-            with torch.no_grad():
+            with torch.inference_mode():
                 self.do_epoch(mode='eval')
             if self.early_stopping.early_stop:
                 print(
@@ -236,23 +249,44 @@ class Trainer():
 
                 pred = F.normalize(pred, p=2, dim=1)
                 targets = F.normalize(targets, p=2, dim=1)
+                # Sigmoid Loss as in 
+                # 'Sigmoid Loss for Language Image Pre-Training' (Zhai et. al)
+                logits = torch.mm(pred, targets.transpose(
+                    0, 1)) * torch.exp(self.anomaly_model.t_prime) + self.anomaly_model.b
+                
+                n = (pred.size(0) + extra_targets.size(0)) / 2.0
 
+                
+                labels = -torch.ones((len(pred), len(targets)), device=logits.device)
+                labels[torch.arange(len(pred)), torch.arange(len(pred))] = 1
+
+
+                loss = - torch.sum(F.logsigmoid(logits * labels)) / n
+                """
+                #pos = logits[torch.arange(n), torch.arange(n)]
+                #neg = logits.clone()
+                #neg[torch.arange(n), torch.arange(n)] = -1e9
+
+                #pos_loss = -F.logsigmoid(pos)
+                #neg_loss = -F.logsigmoid(-neg).mean(dim=1)
+                #loss = (pos_loss + neg_loss).mean()
+
+                
                 scores = torch.mm(pred, targets.transpose(
                     0, 1)) * 4  # tau
-                labels = torch.tensor(range(len(scores)),
+                labels = torch.arange(len(scores),
                                       dtype=torch.long, device=self.device)
 
                 # sym loss with all generated embeddings
                 loss = (self.cross_entropy_loss(scores, labels) + self.cross_entropy_loss(
-                    scores[0:len(pred), 0:len(pred)].transpose(0, 1), labels)) / 2
+                    scores[0:len(pred), 0:len(pred)].transpose(0, 1), labels)) / 2"""
                 # alternative loss formulations - remove extra targets first
                 # classical loss
                 # loss = self.cross_entropy_loss(scores, labels)
                 # classical symmetric loss
                 # loss = (self.cross_entropy_loss(scores, labels) + self.cross_entropy_loss(scores.transpose(0, 1), labels)) / 2
-
                 l_item = loss.item()
-                p_bar_str = f'{mode} loss: {l_item:.3f}'
+                p_bar_str = f'{mode} loss: {l_item:.3f} | sim mat shape: ({logits.shape[0]}, {logits.shape[1]})'
                 p_bar.set_description(str(p_bar_str))
                 self.tmp_loss_lst.append(l_item)
 
@@ -260,6 +294,7 @@ class Trainer():
                     self.optimizer.zero_grad(set_to_none=True)
                     #loss.backward()
                     self.grad_scaler.scale(loss).backward()
+                    self.grad_scaler.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(
                         self.params, self.conf['Train']['max_grad_norm'])
                     self.grad_scaler.step(self.optimizer)
@@ -286,7 +321,6 @@ class Trainer():
         for g in self.optimizer.param_groups:
             g['lr'] = lr
 
-
 class Tokenizer:
     """
     Wrapper for a pre-fitted tokenizer.
@@ -300,7 +334,7 @@ class Tokenizer:
 
     @classmethod
     def from_pretrained(cls, path: str):
-        tokenizer = cls(toklib.from_file(path))
+        tokenizer = cls(_HFTokenizer.from_file(path))
         return tokenizer
 
     def __call__(self, text: list, device: str = 'cpu'):
@@ -336,19 +370,10 @@ def make_new_tokenizer(max_fit_sample, log_data_util, model_conf_path):
     Returns:
         Tokenizer: A wrapped and configured tokenizer instance.
     """
-    def get_training_corpus(log_messages):
-        for log_message in log_messages:
-            yield log_message
 
     model_conf = toml.load(model_conf_path)
     n_tokens = model_conf['tokenizer_vocab_len']
     max_log_len = model_conf['max_log_len']
-    tokenizer = ByteLevelBPETokenizer()
-    tokenizer._tokenizer.model.unk_token = '[UNK]'
-    tokenizer._tokenizer.model.fuse_unk = True
-    tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
-        [pre_tokenizers.Metaspace(), pre_tokenizers.Digits()])
-        #[pre_tokenizers.Metaspace(split=False)])#, pre_tokenizers.Digits()])
     # Load all train logs, then randomly sample max_fit_sample
     all_log_messages = log_data_util.get(
         subset='train', ravel=True, logs=True, length=False, labels=False)['logs']
@@ -358,9 +383,8 @@ def make_new_tokenizer(max_fit_sample, log_data_util, model_conf_path):
         log_messages = [all_log_messages[i] for i in indices]
     else:
         log_messages = all_log_messages
-    training_corpus = get_training_corpus(log_messages)
-    tokenizer.train_from_iterator(
-        training_corpus, vocab_size=n_tokens, min_frequency=2, special_tokens=['[PAD]', '[UNK]'])
+
+    tokenizer = make_tokenizer(model_conf['tokenizer_type'], n_tokens, log_messages)
 
     tokenizer.enable_padding(direction='right', pad_id=0,
                              pad_type_id=0, pad_token='[PAD]', length=None)

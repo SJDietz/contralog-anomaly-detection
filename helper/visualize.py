@@ -31,7 +31,7 @@ def get_sim_mat(trainer, subset: str = 'train', batch_size: int = 64):
                              max_sequ_len=trainer.anomaly_model.conf['max_sequ_len'])
     dl = DataLoader(log_dataset, batch_size=batch_size, shuffle=True, num_workers=0,
                     collate_fn=LogDataset_collate, drop_last=True)
-    with torch.no_grad():
+    with torch.inference_mode():
         for logs, lengths in dl:
             pred, mask_mask, targets, pad_mask = trainer.forward(logs, lengths)
             targets = F.normalize(targets, p=2, dim=-1)

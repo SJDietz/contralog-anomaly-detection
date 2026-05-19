@@ -158,6 +158,7 @@ This section describes the main configuration options for ContraLog. Each parame
 | `max_log_len`           | Maximum number of tokens in a single log message.                          |
 | `max_sequ_len`          | Maximum number of log messages in a sequence.                              |
 | `tokenizer_vocab_len`   | Size of the tokenizer's vocabulary (number of unique tokens).               |
+| `tokenizer_type`        | The type of tokenizer to fit ['word', 'word_digits', 'wordpiece', 'bpe', 'sentence', 'uni', 'bert', 'raw_bpe', 'char']             |
 | `emsize`                | Size of the embedding vector for each token in the log message.            |
 | `d_hid_emb`             | Hidden dimension size for the embedding model's feedforward layers.        |
 | `n_layers_emb`          | Number of transformer layers in the embedding model.                       |
@@ -181,7 +182,9 @@ ContraLog
 │   │   inference_scripts.py---------> Scripts for detecting anomalies (with trained model)
 │   │   log_embedder.py--------------> Wrapper for more flexible embedding
 │   │   models.py--------------------> Main model files for MessageEncoder and SequenceEncoder
+│   │   tokenizer.py-----------------> Script for initializing different tokenizers
 │   │   trainer.py-------------------> Class for handling the training
+│   │   transformer.py---------------> Transformer architecture ContraLog is based on
 │   │
 │   └───config-----------------------> Folder for holding configuration files
 │           main.toml----------------> Main config (make entry for custom data here)
@@ -202,7 +205,7 @@ ContraLog
 │       bgl.py----------------------> Helper scripts for processing raw BGL logs
 │       hdfs.py---------------------> Helper scripts for processing raw HDFS logs
 │       LogDataUtil.py--------------> Utility class for managing data
-│       tbird.py--------------------> Helper scripts for processing raw Thunderbird logs#
+│       tbird.py--------------------> Helper scripts for processing raw Thunderbird logs
 │       visualize.py----------------> Some scripts for plotting
 │
 └───models--------------------------> Models will be saved in this directory

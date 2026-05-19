@@ -2,6 +2,7 @@ max_log_len = 64
 max_sequ_len = 32
 
 tokenizer_vocab_len = 512
+tokenizer_type = 'raw_bpe'
 
 emsize = 32
 d_hid_emb = 64

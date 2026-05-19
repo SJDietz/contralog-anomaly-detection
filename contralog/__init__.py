@@ -7,7 +7,6 @@ Provides tools for training and inference.
 
 # Model components
 from contralog.models import (
-    PositionalEncoding,
     MessageEncoder,
     SequenceEncoder,
     AnomalyModel,
@@ -40,7 +39,6 @@ __version__ = "1.0.0"
 
 __all__ = [
     # Models
-    "PositionalEncoding",
     "MessageEncoder",
     "SequenceEncoder",
     "AnomalyModel",

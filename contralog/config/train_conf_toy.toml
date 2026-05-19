@@ -23,7 +23,7 @@ max_grad_norm = 1
 batch_size = 5
 
 [EarlyStopping]
-patience = 12
+patience = 4
 min_delta = 0.0
 
 [Misc]
